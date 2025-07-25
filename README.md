@@ -1,34 +1,135 @@
-# Experiment Report: Activation Function Comparison
+# Activation Function Comparison in Transformer Models
 
-This report details an experiment comparing the performance of three different activation functions (ReLU, GELU, and SiLU) and the effect of attention bias within the feed-forward network and attention mechanism of a small transformer model.
+This project investigates the effects of different activation functions and the presence of attention bias in a small GPT-style transformer.
 
-## Experimental Setup
+## 🔬 Experiment Overview
 
-- **Model:** A minimal GPT-style model with 6 layers, 8 attention heads, and a model dimension of 384.
-- **Dataset:** A subset of the Cosmopedia-v2 dataset, tokenized to a maximum of 500,000 tokens.
-- **Training:** Each model variant was trained for 5000 steps with a batch size of 12 and gradient accumulation of 4.
-- **Optimizer:** AdamW with a learning rate of 1e-4 and weight decay of 0.1.
-- **Variable:** The activation function in the FFN and the presence of attention bias were changed for each run.
+We compare the training dynamics and performance of three activation functions:
 
-## Results
+* **ReLU**
+* **GELU**
+* **SiLU**
 
-The following plots compare the training and validation metrics for each activation function across the training process.
+Each was tested with and without attention bias in the transformer architecture.
 
-### Training Loss Comparison
+### 🔧 Setup
 
-![Training Loss](./experiment_images/train_loss_comparison.png)
+* **Model:** GPT-style transformer
 
-### Validation Loss Comparison
+  * 6 layers, 8 heads, 384 hidden dimension
+* **Dataset:** Subset of *Cosmopedia-v2* (500,000 tokens)
+* **Training:**
 
-![Validation Loss](./experiment_images/val_loss_comparison.png)
+  * 5,000 steps
+  * Batch size: 12
+  * Gradient accumulation: 4
+* **Optimizer:** AdamW (lr = 1e-4, weight decay = 0.1)
+* **Variants tested:** All combinations of `{ReLU, GELU, SiLU} × {Bias=True, Bias=False}`
 
-### Validation Accuracy Comparison
+## 📊 Results
 
-![Validation Accuracy](./experiment_images/val_accuracy_comparison.png)
+Training and validation metrics were tracked for each variant:
 
-### Validation Perplexity Comparison
+* **Training Loss**
+* **Validation Loss**
+* **Validation Accuracy**
+* **Validation Perplexity**
 
-![Validation Perplexity](./experiment_images/val_perplexity_comparison.png)
+<p align="center">
+  <img src="./experiment_images/train_loss_comparison.png" width="400"/>
+  <img src="./experiment_images/val_loss_comparison.png" width="400"/>
+  <br/>
+  <img src="./experiment_images/val_accuracy_comparison.png" width="400"/>
+  <img src="./experiment_images/val_perplexity_comparison.png" width="400"/>
+</p>
 
-## Conclusion
-Based on the final validation loss, **GELU_BIAS_TRUE** performed the best, achieving a validation loss of 4.7966. The experiments show that both activation functions and the presence of attention bias can influence model performance. Further analysis of the plots is recommended to understand the specific trade-offs and learning dynamics for each combination.
+
+Let's walk through **where the activation functions and attention bias are applied**:
+
+---
+
+## 🔧 1. **Activation Functions**
+
+### **Where it's used:**
+
+The activation function is applied **inside the FeedForward network**, specifically in the `FeedForward` class:
+
+```python
+class FeedForward(nn.Module):
+    ...
+    def __init__(..., activation: str = 'silu'):
+        ...
+        if activation.lower() == 'relu':
+            self.activation = F.relu
+        elif activation.lower() == 'gelu':
+            self.activation = F.gelu
+        elif activation.lower() == 'silu':
+            self.activation = F.silu
+    ...
+    def forward(self, x):
+        return self.linear2(self.dropout(self.activation(self.linear1(x))))
+```
+
+### **Applied in TransformerBlock:**
+
+```python
+class TransformerBlock(nn.Module):
+    ...
+    def __init__(..., activation: str = 'silu', ...):
+        ...
+        self.feed_forward = FeedForward(..., activation=activation, ...)
+```
+
+### ✅ So:
+
+Each transformer block uses the **specified activation** (`relu`, `gelu`, or `silu`) **after the first linear projection in the FFN**.
+
+---
+
+## 🧠 2. **Attention Bias**
+
+### **Where it's used:**
+
+The attention bias affects whether the `nn.Linear` layers inside **QKV and output projections** have `bias=True`.
+
+This is handled in the `MultiHeadAttention` class:
+
+```python
+class MultiHeadAttention(nn.Module):
+    def __init__(..., use_attention_bias: bool = False):
+        ...
+        self.qkv = nn.Linear(d_model, d_model * 3, bias=use_attention_bias)
+        self.w_o = nn.Linear(d_model, d_model, bias=use_attention_bias)
+```
+
+This means:
+
+* If `use_attention_bias=True`, the QKV and output projection layers will have biases.
+* If `False`, they will not.
+
+### **Applied in TransformerBlock:**
+
+```python
+class TransformerBlock(nn.Module):
+    def __init__(..., use_attention_bias: bool = False):
+        ...
+        self.attention = MultiHeadAttention(..., use_attention_bias=use_attention_bias)
+```
+
+---
+
+## 🔁 Summary
+
+| Component          | Parameter Source            | Effect Location                                 |
+| ------------------ | --------------------------- | ----------------------------------------------- |
+| **Activation**     | `config.activation`         | `FeedForward → activation(linear1(x))`          |
+| **Attention Bias** | `config.use_attention_bias` | `MultiHeadAttention → nn.Linear(..., bias=...)` |
+
+
+## 📈 Observations
+
+While **GELU with attention bias** achieved the best final validation loss (4.7966), all activation functions performed similarly overall. There is no significant advantage for any single configuration based on this dataset and setup. Minor differences may reflect noise or dataset variance.
+
+## 📌 Conclusion
+
+There is no clearly superior activation function in this setting. For small transformer models on moderate data, **activation choice and attention bias may not drastically affect performance**—but deeper analysis or larger-scale experiments may reveal more nuanced behavior.
